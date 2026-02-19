@@ -1,3 +1,4 @@
 PyMuPDF
 python-pptx
+pdf2docx
 pyinstaller
