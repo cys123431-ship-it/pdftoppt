@@ -1,54 +1,78 @@
-# PDF to PPT Converter (PDF-PPT 변환기)
+# PDF Converter (v1.2.0)
 
-간단하고 강력한 PDF to PowerPoint 변환 도구입니다. 각 PDF 페이지를 고해상도 이미지로 변환하여 파워포인트 슬라이드에 삽입합니다.
+`PDF -> PPTX / DOCX / PNG / JPG`, `PDF 병합`, `PDF 분할`, `폴더 일괄 변환`을 지원하는 Windows GUI 프로그램입니다.
 
-## 특징 (Features)
+## 주요 기능
 
-*   **100% 원본 유지**: PDF 페이지를 이미지로 변환하여 폰트 깨짐이나 레이아웃 변경 없이 원본 그대로 PPT에 담깁니다.
-*   **간편한 사용**: 직관적인 GUI로 파일만 선택하면 끝!
-*   **독립 실행**: Python이 설치되지 않은 PC에서도 `.exe` 파일 하나로 실행 가능합니다.
+- 변환: `PDF -> PPTX`, `PDF -> DOCX`, `PDF -> PNG`, `PDF -> JPG`
+- PDF 편집: 여러 PDF 병합, 페이지 단위 분할
+- 페이지 범위 지정: `1-3,5,8-10` 형식 지원
+- 파일 큐 + 드래그앤드롭: 여러 PDF를 큐에 추가해 작업 가능
+- 암호 PDF 지원:
+  - 입력 PDF 비밀번호(열기)
+  - 출력 PDF 비밀번호(병합/분할 결과 저장 시)
+- 출력 충돌 정책:
+  - `Overwrite`
+  - `Skip Existing`
+  - `Auto Rename`
+- 품질 옵션:
+  - `Render DPI` (이미지/PPT 렌더링 품질)
+  - `JPG quality`
+- 일괄 변환 실패 로그 CSV 저장
+- 작업 취소 버튼 지원
 
-## 설치 및 실행 방법 (Installation & Usage)
+## 지원 작업 목록
 
-### 실행 파일 사용 (Recommended)
-1.  [Releases](https://github.com/cys123431-ship-it/pdftoppt/releases) 페이지에서 최신 `PDFtoPPTConverter.exe`를 다운로드합니다. (또는 `dist` 폴더 확인)
-2.  다운로드한 파일을 실행합니다.
-3.  "Select PDF" 버튼을 눌러 PDF를 선택하고 변환을 시작합니다.
+- 단일 PDF 변환
+  - `PDF -> PPTX`
+  - `PDF -> DOCX`
+  - `PDF -> PNG/JPG`
+- 다중 PDF 병합 (`Merge PDFs`)
+- 단일 PDF 분할 (`Split PDF`)
+- 폴더 일괄 변환 (`Batch Convert Folder`)
+  - 출력 형식: `PPTX`, `DOCX`, `PNG`, `JPG`
 
-### 소스 코드에서 실행 (For Developers)
+## 설치 및 실행
 
-이 프로젝트는 Python 3.x 기반입니다.
+### 1) 실행 파일 사용 (권장)
 
-1.  저장소 클론:
-    ```bash
-    git clone https://github.com/cys123431-ship-it/pdftoppt.git
-    cd pdftoppt
-    ```
+릴리스 페이지에서 최신 `PDFConverter.exe`를 다운로드해 실행하세요.
 
-2.  의존성 설치:
-    ```bash
-    pip install -r requirements.txt
-    ```
+- Releases: https://github.com/cys123431-ship-it/pdftoppt/releases
 
-3.  앱 실행:
-    ```bash
-    python main.py
-    ```
-
-## 빌드 방법 (Building from Source)
-
-PyInstaller를 사용하여 실행 파일을 만들 수 있습니다.
+### 2) 소스 코드 실행
 
 ```bash
-pip install pyinstaller
-pyinstaller --noconsole --onefile --name "PDFtoPPTConverter" main.py
+git clone https://github.com/cys123431-ship-it/pdftoppt.git
+cd pdftoppt
+pip install -r requirements.txt
+python main.py
 ```
 
-`dist` 폴더에 실행 파일이 생성됩니다.
+## 빌드 (Windows EXE)
 
-## 기술 스택 (Tech Stack)
+```bash
+pyinstaller --noconfirm --clean --noconsole --onefile --name PDFConverter main.py
+```
 
-*   [Python](https://www.python.org/)
-*   [Tkinter](https://docs.python.org/3/library/tkinter.html): GUI
-*   [PyMuPDF (fitz)](https://pymupdf.readthedocs.io/): PDF Rendering
-*   [python-pptx](https://python-pptx.readthedocs.io/): PPT Generation
+빌드 결과물: `dist/PDFConverter.exe`
+
+## 자동 릴리스
+
+GitHub Actions 워크플로우가 설정되어 있습니다.
+
+- 파일: `.github/workflows/windows-release.yml`
+- 태그 `v*` 푸시 시:
+  - Windows에서 EXE 빌드
+  - GitHub Release 생성
+  - `PDFConverter.exe` 에셋 업로드
+
+## 기술 스택
+
+- Python
+- Tkinter
+- tkinterdnd2
+- PyMuPDF (fitz)
+- python-pptx
+- pdf2docx
+- PyInstaller
