@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag override (for example v1.4.0). Leave empty to use VERSION."
+        description: "Release tag override (for example v1.5.0). Leave empty to use VERSION."
         required: false
         type: string
 
@@ -76,9 +76,54 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build EXE with PyInstaller
+      - name: Install Tesseract OCR
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --noconsole --onefile --name PDFConverter main.py
+          choco install tesseract --version=5.5.3.20260724 -y --no-progress
+          $tessRoot = Join-Path $env:ProgramFiles "Tesseract-OCR"
+          $tessData = Join-Path $tessRoot "tessdata"
+          $modelBase = "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0"
+          Invoke-WebRequest "$modelBase/eng.traineddata" -OutFile (Join-Path $tessData "eng.traineddata")
+          Invoke-WebRequest "$modelBase/kor.traineddata" -OutFile (Join-Path $tessData "kor.traineddata")
+          Invoke-WebRequest "$modelBase/osd.traineddata" -OutFile (Join-Path $tessData "osd.traineddata")
+          "TESSERACT_CMD=$(Join-Path $tessRoot 'tesseract.exe')" >> $env:GITHUB_ENV
+          "TESSDATA_PREFIX=$tessData" >> $env:GITHUB_ENV
+
+      - name: Verify OCR runtime
+        shell: pwsh
+        run: |
+          & $env:TESSERACT_CMD --version
+          python -c "from ocr_tools import ensure_ocr_ready, list_ocr_languages; print(ensure_ocr_ready('kor+eng')); print(sorted(list_ocr_languages()))"
+
+      - name: Prepare bundled OCR runtime
+        shell: pwsh
+        run: |
+          $src = Join-Path $env:ProgramFiles "Tesseract-OCR"
+          $dst = Join-Path $PWD "vendor\tesseract"
+          $dstData = Join-Path $dst "tessdata"
+          New-Item -ItemType Directory -Force -Path $dstData | Out-Null
+          Copy-Item (Join-Path $src "tesseract.exe") $dst
+          Get-ChildItem $src -Filter "*.dll" | Copy-Item -Destination $dst
+          foreach ($name in @("eng.traineddata", "kor.traineddata", "osd.traineddata", "pdf.ttf")) {
+            $source = Join-Path (Join-Path $src "tessdata") $name
+            if (Test-Path $source) { Copy-Item $source $dstData }
+          }
+          foreach ($folder in @("configs", "tessconfigs")) {
+            $source = Join-Path (Join-Path $src "tessdata") $folder
+            if (Test-Path $source) { Copy-Item $source $dstData -Recurse }
+          }
+          foreach ($licenseName in @("LICENSE", "COPYING")) {
+            $source = Join-Path $src $licenseName
+            if (Test-Path $source) { Copy-Item $source $dst }
+          }
+
+      - name: Build EXE with PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --noconsole --onefile --name PDFConverter `
+            --add-data "vendor\tesseract;tesseract" `
+            --add-data "THIRD_PARTY_NOTICES.md;." `
+            main.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -108,3 +153,4 @@ jobs:
           generate_release_notes: true
           files: |
             dist/PDFConverter.exe
+            THIRD_PARTY_NOTICES.md
