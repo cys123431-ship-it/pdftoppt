@@ -53,11 +53,10 @@ def find_tesseract_executable() -> str:
     if which:
         candidates.append(which)
 
-    program_files = [
+    for root in (
         os.environ.get("ProgramFiles", ""),
         os.environ.get("ProgramFiles(x86)", ""),
-    ]
-    for root in program_files:
+    ):
         if root:
             candidates.append(os.path.join(root, "Tesseract-OCR", "tesseract.exe"))
 
@@ -149,11 +148,23 @@ def _render_page_to_temp_png(page: fitz.Page, dpi: int) -> str:
         raise
 
 
+def _terminate_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+
+
 def _run_tesseract(
     image_path: str,
     language: str,
     output_format: str,
     dpi: int,
+    cancel_event: object | None = None,
 ) -> bytes:
     executable, tessdata_dir = ensure_ocr_ready(language)
     command = [
@@ -174,24 +185,42 @@ def _run_tesseract(
     if output_format == "pdf":
         command.append("pdf")
 
-    completed = subprocess.run(
+    process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        check=False,
         creationflags=_subprocess_creationflags(),
     )
-    if completed.returncode != 0:
-        error = completed.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(error or f"Tesseract failed with exit code {completed.returncode}.")
-    return completed.stdout
+    try:
+        while True:
+            if _is_cancelled(cancel_event):
+                _terminate_process(process)
+                raise RuntimeError(CANCELLED_MESSAGE)
+            try:
+                stdout, stderr = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if _is_cancelled(cancel_event) and process.poll() is None:
+            _terminate_process(process)
+
+    if process.returncode != 0:
+        error = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(error or f"Tesseract failed with exit code {process.returncode}.")
+    return stdout
 
 
-def _ocr_page_text(page: fitz.Page, language: str, dpi: int) -> str:
+def _ocr_page_text(
+    page: fitz.Page,
+    language: str,
+    dpi: int,
+    cancel_event: object | None = None,
+) -> str:
     temp_image: str | None = None
     try:
         temp_image = _render_page_to_temp_png(page, dpi)
-        data = _run_tesseract(temp_image, language, "txt", dpi)
+        data = _run_tesseract(temp_image, language, "txt", dpi, cancel_event)
         return data.decode("utf-8", errors="replace").strip()
     finally:
         _safe_remove(temp_image)
@@ -202,10 +231,11 @@ def _collect_page_text(
     language: str,
     ocr_mode: str,
     dpi: int,
+    cancel_event: object | None = None,
 ) -> tuple[str, bool]:
     if not page_needs_ocr(page, ocr_mode):
         return page.get_text("text").strip(), False
-    return _ocr_page_text(page, language, dpi), True
+    return _ocr_page_text(page, language, dpi, cancel_event), True
 
 
 def ocr_pdf_to_searchable_pdf(
@@ -255,7 +285,13 @@ def ocr_pdf_to_searchable_pdf(
                 ocr_doc = None
                 try:
                     temp_image = _render_page_to_temp_png(page, ocr_dpi)
-                    pdf_bytes = _run_tesseract(temp_image, ocr_language, "pdf", ocr_dpi)
+                    pdf_bytes = _run_tesseract(
+                        temp_image,
+                        ocr_language,
+                        "pdf",
+                        ocr_dpi,
+                        cancel_event,
+                    )
                     ocr_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                     output_doc.insert_pdf(ocr_doc)
                     ocr_count += 1
@@ -276,6 +312,8 @@ def ocr_pdf_to_searchable_pdf(
         output_doc = None
         source_doc.close()
         source_doc = None
+        if _is_cancelled(cancel_event):
+            return False, CANCELLED_MESSAGE
         _atomic_replace(staged_path, resolved_path)
         staged_path = None
         _set_progress(progress_callback, 100)
@@ -308,6 +346,9 @@ def ocr_pdf_to_text(
 ) -> tuple[bool, str]:
     if ocr_dpi < 72 or ocr_dpi > 600:
         return False, "OCR DPI must be between 72 and 600."
+    if ocr_mode not in VALID_OCR_MODES:
+        return False, f"Unsupported OCR mode: {ocr_mode}"
+
     source_doc = None
     staged_path: str | None = None
     try:
@@ -327,7 +368,13 @@ def ocr_pdf_to_text(
         for position, page_index in enumerate(selected_pages):
             if _is_cancelled(cancel_event):
                 return False, CANCELLED_MESSAGE
-            text, used_ocr = _collect_page_text(source_doc[page_index], ocr_language, ocr_mode, ocr_dpi)
+            text, used_ocr = _collect_page_text(
+                source_doc[page_index],
+                ocr_language,
+                ocr_mode,
+                ocr_dpi,
+                cancel_event,
+            )
             texts.append(text)
             ocr_count += int(used_ocr)
             _set_progress(progress_callback, ((position + 1) / total) * 90)
@@ -367,6 +414,9 @@ def ocr_pdf_to_docx(
 ) -> tuple[bool, str]:
     if ocr_dpi < 72 or ocr_dpi > 600:
         return False, "OCR DPI must be between 72 and 600."
+    if ocr_mode not in VALID_OCR_MODES:
+        return False, f"Unsupported OCR mode: {ocr_mode}"
+
     source_doc = None
     staged_path: str | None = None
     try:
@@ -386,9 +436,18 @@ def ocr_pdf_to_docx(
         for position, page_index in enumerate(selected_pages):
             if _is_cancelled(cancel_event):
                 return False, CANCELLED_MESSAGE
-            text, used_ocr = _collect_page_text(source_doc[page_index], ocr_language, ocr_mode, ocr_dpi)
+            text, used_ocr = _collect_page_text(
+                source_doc[page_index],
+                ocr_language,
+                ocr_mode,
+                ocr_dpi,
+                cancel_event,
+            )
             ocr_count += int(used_ocr)
-            for paragraph_text in text.splitlines() or [""]:
+            lines = text.splitlines()
+            if not lines:
+                lines = [""]
+            for paragraph_text in lines:
                 document.add_paragraph(paragraph_text)
             if position < total - 1:
                 document.add_page_break()
