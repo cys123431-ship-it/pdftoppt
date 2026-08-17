@@ -32,11 +32,7 @@ def apply_page_edits(
     output_password: str = "",
     output_conflict_policy: str = CONFLICT_OVERWRITE,
 ) -> tuple[bool, str, str]:
-    """Create an edited PDF from an ordered page plan.
-
-    Each plan item contains the zero-based source page index and an additional
-    clockwise rotation in degrees. The output is staged and atomically replaced.
-    """
+    """Create an edited PDF from an ordered page plan using an atomic save."""
     if not page_plan:
         return False, "At least one page must remain in the PDF.", ""
 
@@ -77,7 +73,8 @@ def apply_page_edits(
 
         _atomic_replace(staged_path, resolved_path)
         staged_path = None
-        note = "" if os.path.abspath(resolved_path) == os.path.abspath(output_path) else f" Saved as: {resolved_path}"
+        same_path = os.path.normcase(os.path.abspath(resolved_path)) == os.path.normcase(os.path.abspath(output_path))
+        note = "" if same_path else f" Saved as: {resolved_path}"
         return True, f"PDF edit saved successfully!{note}", resolved_path
     except Exception as exc:
         return False, str(exc), ""
@@ -143,6 +140,8 @@ class PageEditorDialog(tk.Toplevel):
                 "last_page": "PDF에는 최소 1페이지가 남아 있어야 합니다.",
                 "save_title": "편집된 PDF 저장",
                 "saved": "저장 완료",
+                "saved_message": "편집된 PDF를 저장했습니다.",
+                "skipped_message": "같은 이름의 파일이 이미 있어 저장을 건너뛰었습니다.",
                 "error": "오류",
             },
             "en": {
@@ -162,6 +161,8 @@ class PageEditorDialog(tk.Toplevel):
                 "last_page": "At least one page must remain in the PDF.",
                 "save_title": "Save edited PDF",
                 "saved": "Saved",
+                "saved_message": "Edited PDF saved successfully.",
+                "skipped_message": "The existing file was skipped.",
                 "error": "Error",
             },
         }
@@ -245,8 +246,11 @@ class PageEditorDialog(tk.Toplevel):
         entry = self.plan[plan_index]
         page = self.doc[entry.source_index]
         rect = page.rect
+        width, height = float(rect.width), float(rect.height)
+        if entry.rotation_delta % 180:
+            width, height = height, width
         max_width, max_height = 650.0, 520.0
-        scale = min(max_width / max(rect.width, 1), max_height / max(rect.height, 1), 1.5)
+        scale = min(max_width / max(width, 1), max_height / max(height, 1), 1.5)
         matrix = fitz.Matrix(scale, scale).prerotate(entry.rotation_delta)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         encoded = base64.b64encode(pix.tobytes("png")).decode("ascii")
@@ -324,7 +328,10 @@ class PageEditorDialog(tk.Toplevel):
             output_conflict_policy=self.output_conflict_policy,
         )
         if success:
-            messagebox.showinfo(self._t("saved"), message, parent=self)
+            display_message = self._t("skipped_message") if message.startswith("Skipped") else self._t("saved_message")
+            if saved_path:
+                display_message = f"{display_message}\n{saved_path}"
+            messagebox.showinfo(self._t("saved"), display_message, parent=self)
             if self.on_saved and saved_path:
                 self.on_saved(saved_path)
         else:
