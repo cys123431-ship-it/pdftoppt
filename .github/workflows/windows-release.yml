@@ -1,13 +1,16 @@
-name: Build And Release Windows EXE
+name: CI And Windows Release
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag (e.g. v1.2.0). Leave empty to build artifact only."
+        description: "Release tag override (for example v1.4.0). Leave empty to use VERSION."
         required: false
         type: string
 
@@ -15,9 +18,8 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  test:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,25 +28,48 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  build-and-release:
+    needs: test
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release:'))
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
       - name: Resolve release tag
         id: meta
         shell: pwsh
         run: |
-          $tag = ""
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $tag = "${{ github.ref_name }}"
-          } elseif ("${{ github.event.inputs.release_tag }}" -ne "") {
-            $tag = "${{ github.event.inputs.release_tag }}"
+          $tag = "${{ github.event.inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $version = (Get-Content VERSION -Raw).Trim()
+            if ([string]::IsNullOrWhiteSpace($version)) {
+              throw "VERSION is empty."
+            }
+            $tag = "v$version"
           }
-
-          if ($tag -ne "") {
-            "should_release=true" >> $env:GITHUB_OUTPUT
-            "tag=$tag" >> $env:GITHUB_OUTPUT
-          } else {
-            "should_release=false" >> $env:GITHUB_OUTPUT
-            "tag=" >> $env:GITHUB_OUTPUT
-          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Install dependencies
         run: |
@@ -61,8 +86,21 @@ jobs:
           name: PDFConverter-windows-exe
           path: dist/PDFConverter.exe
 
-      - name: Create GitHub release
-        if: steps.meta.outputs.should_release == 'true'
+      - name: Create release tag
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          git fetch --tags --force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if (git rev-parse -q --verify "refs/tags/$tag") {
+            Write-Host "Tag $tag already exists; using the existing tag."
+          } else {
+            git tag -a $tag -m "Release $tag"
+            git push origin $tag
+          }
+
+      - name: Create or update GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
