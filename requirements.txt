@@ -1,5 +1,5 @@
-PyMuPDF
-python-pptx
-pdf2docx
-pyinstaller
-tkinterdnd2
+PyMuPDF==1.28.0
+python-pptx==1.0.2
+pdf2docx==0.5.13
+pyinstaller==6.21.0
+tkinterdnd2==0.6.2
